@@ -14,18 +14,14 @@ concurrency:
   group: publish-dockerhub
   cancel-in-progress: false
 
-defaults:
-  run:
-    working-directory: prototype
-
 jobs:
   # Never publish an image that does not pass tests.
+  # A job that calls a reusable workflow may only declare name/uses/with/
+  # secrets/needs/if - no runs-on and no steps. Declaring either makes GitHub
+  # reject the whole workflow file, so this job fails at load time, not run time.
   gate:
     name: Require passing CI
-    runs-on: ubuntu-latest
-    steps:
-      - name: Run CI on this commit
-        uses: ./.github/workflows/ci.yml
+    uses: ./.github/workflows/ci.yml
 
   publish:
     name: Build and push image
@@ -38,17 +34,32 @@ jobs:
 
       - name: Compute tags
         id: meta
+        env:
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/pr-decomposer
+          SHA: ${{ github.sha }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/pr-decomposer"
           {
             echo "image=${IMAGE}"
-            echo "latest=${IMAGE}:latest"
-            echo "sha=${IMAGE}:${{ github.sha }}"
-            echo "short=${IMAGE}:${{ github.sha::7 }}"
+            # Built as one heredoc output so the tags list can never contain a
+            # blank entry when REF_TYPE is not a tag.
+            echo "tags<<EOF"
+            echo "${IMAGE}:latest"
+            echo "${IMAGE}:${SHA}"
+            echo "${IMAGE}:${SHA::7}"
+            if [ "${REF_TYPE}" = "tag" ]; then
+              echo "${IMAGE}:${REF_NAME}"
+            fi
+            echo "EOF"
           } >> "$GITHUB_OUTPUT"
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            echo "semver=${IMAGE}:${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-          fi
+
+      - name: Check Docker Hub credentials
+        if: steps.meta.outputs.image == '/pr-decomposer'
+        run: |
+          echo "::error::DOCKERHUB_USERNAME is not set. Add it under" \
+            "Settings -> Secrets and variables -> Actions." >&2
+          exit 1
 
       - uses: docker/setup-buildx-action@v3
 
@@ -66,21 +77,21 @@ jobs:
           context: prototype
           file: prototype/Dockerfile
           push: true
-          tags: |
-            ${{ steps.meta.outputs.latest }}
-            ${{ steps.meta.outputs.sha }}
-            ${{ steps.meta.outputs.short }}
-            ${{ steps.meta.outputs.semver }}
+          tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Summary
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          SHA: ${{ github.sha }}
         run: |
           echo "### Published to Docker Hub" >> "$GITHUB_STEP_SUMMARY"
           echo "| Tag | Image |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| \`latest\` | \`${{ steps.meta.outputs.latest }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| \`main\` (sha) | \`${{ steps.meta.outputs.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| \`latest\` | \`${IMAGE}:latest\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| \`main\` (sha) | \`${IMAGE}:${SHA}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| \`main\` (short) | \`${IMAGE}:${SHA::7}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Update the VM with: \`/opt/pr-decomposer/prototype/deploy/deploy_vm.sh\`" \
+          echo "Update the VM with \`/opt/pr-decomposer/prototype/deploy/deploy_vm.sh\`" \
             >> "$GITHUB_STEP_SUMMARY"
