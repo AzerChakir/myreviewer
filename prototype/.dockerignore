@@ -1,0 +1,38 @@
+# Keep the build context small and never bake secrets into layers.
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets - must never enter the image
+.env
+*.pem
+private-key*
+secrets/
+
+# Runtime state (mounted as a volume in production)
+data/
+
+# Angular
+dashboard/node_modules/
+dashboard/.angular/
+dashboard/dist/
+!dashboard/dist/dashboard/browser/
+
+# Logs / editor / OS
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Docs and dev helpers that the runtime does not need
+docs/
+*.md
+!README.md
+scripts_*.sh
+slurm/

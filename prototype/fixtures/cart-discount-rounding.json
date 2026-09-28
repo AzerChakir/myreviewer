@@ -1,0 +1,33 @@
+{
+  "name": "cart-discount-rounding",
+  "title": "Add discount support to the cart",
+  "requirements": [
+    "Prices must be exact to the cent (integer arithmetic, no floating-point drift).",
+    "Applying the same discount twice must not change the total (idempotency)."
+  ],
+  "expected_bugs": [
+    {
+      "type": "logic",
+      "severity": "critical",
+      "path": "cart/pricing.py",
+      "keywords": [
+        "round",
+        "trunc",
+        "float",
+        "cent"
+      ]
+    },
+    {
+      "type": "edge-case",
+      "severity": "minor",
+      "path": "cart/pricing.py",
+      "keywords": [
+        "idempot",
+        "double",
+        "re-appl",
+        "twice"
+      ]
+    }
+  ],
+  "diff": "diff --git a/cart/pricing.py b/cart/pricing.py\n--- a/cart/pricing.py\n+++ b/cart/pricing.py\n@@ -1,3 +1,22 @@\n def _cents(value):\n-    return int(value * 100)\n+    return int(round(value * 100))\n+\n+\n+def apply_discount(price_cents: int, discount_pct: float) -> int:\n+    if discount_pct < 0 or discount_pct > 100:\n+        raise ValueError(\"discount must be between 0 and 100\")\n+    if discount_pct == 0:\n+        return price_cents\n+    fraction = 1 - discount_pct / 100\n+    return int(price_cents * fraction)\ndiff --git a/cart/api.py b/cart/api.py\n--- a/cart/api.py\n+++ b/cart/api.py\n@@ -10,6 +10,15 @@ from .pricing import apply_discount\n def checkout(cart: Cart, codes: list[str]) -> int:\n-    total = _cents(cart.subtotal)\n     for code in codes:\n-        cart.add_discount(code)\n-    return _cents(cart.total())\n+        discount = DISCOUNTS.get(code)\n+        if discount is None:\n+            continue\n+        cart.total = apply_discount(cart.total, discount)\n+    # Retried requests re-apply the discount, so keep totals stable.\n+    if cart.total > 0:\n+        cart.total = apply_discount(cart.total, DISCOUNTS.get(codes[0]) or 0)\n+    return cart.total\ndiff --git a/cart/tests/test_pricing.py b/cart/tests/test_pricing.py\n--- a/cart/tests/test_pricing.py\n+++ b/cart/tests/test_pricing.py\n@@ -1,4 +1,16 @@\n from cart.pricing import apply_discount\n \n \n def test_discount_rounds_down():\n-    assert apply_discount(999, 10) == 899\n+    # 999 * 0.9 == 899.1 -> floor to 899\n+    assert apply_discount(999, 10) == 899\n+\n+\n+def test_discount_keeps_cents_exact():\n+    # 100 * (1 - 33.3/100) == 66.7 -> 66 by float truncation\n+    assert apply_discount(100, 33.3) == 66\n+"
+}

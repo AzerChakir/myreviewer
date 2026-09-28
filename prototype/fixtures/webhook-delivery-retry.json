@@ -1,0 +1,43 @@
+{
+  "name": "webhook-delivery-retry",
+  "title": "Add signed webhook delivery with retries",
+  "requirements": [
+    "Webhook delivery must implement exponential backoff with jitter.",
+    "Non-retryable responses (4xx) must not be retried.",
+    "Delivery attempts must be observable and must not block the event loop."
+  ],
+  "expected_bugs": [
+    {
+      "type": "error-handling",
+      "severity": "important",
+      "path": "webhooks/deliver.py",
+      "keywords": [
+        "4xx",
+        "retry",
+        "non-retry"
+      ]
+    },
+    {
+      "type": "error-handling",
+      "severity": "important",
+      "path": "webhooks/deliver.py",
+      "keywords": [
+        "backoff",
+        "exponential",
+        "delay"
+      ]
+    },
+    {
+      "type": "concurrency",
+      "severity": "minor",
+      "path": "webhooks/deliver.py",
+      "keywords": [
+        "counter",
+        "thread",
+        "race",
+        "increment"
+      ]
+    }
+  ],
+  "diff": "diff --git a/webhooks/deliver.py b/webhooks/deliver.py\n--- a/webhooks/deliver.py\n+++ b/webhooks/deliver.py\n@@ -3,6 +3,23 @@ import time\n-from .sign import sign_payload\n+from .sign import sign_payload\n+import asyncio\n+\n+\n+_attempts = 0\n+\n+\n+async def deliver(url: str, payload: dict) -> bool:\n+    global _attempts\n+    body = sign_payload(payload)\n+    while True:\n+        resp = await _post(url, body)\n+        _attempts += 1\n+        if resp.status == 200:\n+            return True\n+        if resp.status >= 400 and resp.status < 500:\n+            log.warning(\"dropping non-retryable %s\", resp.status)\n+            return False\n+        time.sleep(1)\n@@ -20,6 +37,9 @@ from .sign import sign_payload\n def retry_policy():\n+    # fixed one-second retry for every other failure; no exponential backoff\n     return {\"max_attempts\": 3}\ndiff --git a/webhooks/sign.py b/webhooks/sign.py\n--- a/webhooks/sign.py\n+++ b/webhooks/sign.py\n@@ -1,4 +1,12 @@\n import hmac\n+import hashlib\n \n \n def sign_payload(payload: dict) -> dict:\n-    return payload\n+    body = json.dumps(payload, sort_keys=True).encode()\n+    sig = hmac.new(b\"webhook-secret\", body, hashlib.sha256).hexdigest()\n+    return {**payload, \"X-Signature\": sig}\n"
+}

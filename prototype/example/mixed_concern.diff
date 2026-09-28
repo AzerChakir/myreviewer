@@ -1,0 +1,137 @@
+diff --git a/users/uploads.py b/users/uploads.py
+new file mode 100644
+index 0000000..e69de29
+--- /dev/null
++++ b/users/uploads.py
+@@ -0,0 +1,18 @@
++import os
++import uuid
++from pathlib import Path
++
++from django.core.files.storage import default_storage
++
++
++def store_avatar(file_obj, user):
++    ext = Path(file_obj.name).suffix
++    key = f"avatars/{user.id}/{uuid.uuid4().hex}{ext}"
++    default_storage.save(key, file_obj)
++    user.avatar_key = key
++    user.save(update_fields=["avatar_key"])
++    return key
++
++
++def avatar_url(user):
++    if not user.avatar_key:
++        return None
++    return default_storage.url(user.avatar_key)
+diff --git a/users/views.py b/users/views.py
+index 7b2d4c9..a91c02f 100644
+--- a/users/views.py
++++ b/users/views.py
+@@ -10,6 +10,7 @@ from django.views.decorators.http import require_POST
+ from .forms import ProfileForm
+ from .models import User
++from .uploads import store_avatar, avatar_url
+@@ -34,11 +35,16 @@ def profile(request, username):
+-    return render(request, "users/profile.html", {"profile": user})
++    return render(request, "users/profile.html", {
++        "profile": user,
++        "avatar_url": avatar_url(user),
++    })
+@@ -58,7 +66,7 @@ def update_avatar(request, user_id):
+-    old = default_storage.save("avatars/" + user_id, request.FILES["avatar"])
+-    user.avatar_key = old
+-    user.save()
+-    return redirect("profile", username=user.username)
++    key = store_avatar(request.FILES["avatar"], user)
++    return redirect("profile", username=user.username)
+diff --git a/orders/queries.py b/orders/queries.py
+index 11aa5c2..f4d6a2e 100644
+--- a/orders/queries.py
++++ b/orders/queries.py
+@@ -41,7 +41,7 @@ def recent_orders(user, limit=20):
+-    rows = Order.objects.filter(
+-        customer=user,
+-        status__in=["paid", "shipped"],
+-    ).order_by("-created_at")
++    rows = Order.objects.filter(
++        customer=user,
++        status__in=["paid", "shipped"],
++    ).select_related("line_items") \
++     .prefetch_related("payments") \
++     .order_by("-created_at")
+@@ -55,6 +55,9 @@ def recent_orders(user, limit=20):
+     return [serialize_order(row) for row in rows]
++
++
++def order_total(order_id):
++    order = Order.objects.filter(id=order_id).annotate(
++        total=Sum(F("line_items__price") * F("line_items__quantity"))
++    ).first()
++    return order.total if order else Decimal("0.00")
+diff --git a/orders/migrations/0042_order_lineitem_index.py b/orders/migrations/0042_order_lineitem_index.py
+new file mode 100644
+index 0000000..e69de29
+--- /dev/null
++++ b/orders/migrations/0042_order_lineitem_index.py
+@@ -0,0 +1,15 @@
++from django.db import migrations
++
++
++class Migration(migrations.Migration):
++
++    dependencies = [
++        ("orders", "0041_auto"),
++    ]
++
++    operations = [
++        migrations.RunSQL(
++            "CREATE INDEX CONCURRENTLY IF NOT EXISTS order_lineitems_orders_idx "
++            "ON order_lineitems (order_id)"
++        ),
++    ]
+diff --git a/core/utils.py b/core/utils.py
+index 3f2b9a1..88f6de8 100644
+--- a/core/utils.py
++++ b/core/utils.py
+@@ -12,9 +12,6 @@ import requests
+-def generate_slug(text):
+-    return re.sub(r"[^a-z0-9]+", "-", text.strip().lower())
+-
+-
+ def slugify(value):
+     return re.sub(r"[^a-z0-9]+", "-", value.strip().lower())
++
++
++def first_or_none(queryset):
++    return queryset.first()
+diff --git a/users/templates/avatar.html b/users/templates/avatar.html
+new file mode 100644
+index 0000000..e69de29
+--- /dev/null
++++ b/users/templates/avatar.html
+@@ -0,0 +1,5 @@
++{% if avatar_url %}
++<img class="avatar" src="{{ avatar_url }}" alt="user avatar" />
++{% else %}
++<span class="avatar-placeholder">{{ profile.username|slice:":1" }}</span>
++{% endif %}
+diff --git a/requirements.txt b/requirements.txt
+index 9c1f2d0..b8e2a11 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -8,7 +8,7 @@ django==4.2.9
+-django-storages==1.14.2
++django-storages==1.15.0
+ psycopg2-binary==2.9.9
+diff --git a/pyproject.toml b/pyproject.toml
+index 5a2e1c0..c2d1f33 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -15,7 +15,7 @@ requires-python = ">=3.11"
+ dependencies = [
+     "django>=4.2",
+-    "django-storages==1.14.2",
++    "django-storages==1.15.0",
+     "pillow>=10.1",
+ ]

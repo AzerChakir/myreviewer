@@ -1,0 +1,33 @@
+{
+  "name": "auth-token-rotation",
+  "title": "Rotate session tokens on login",
+  "requirements": [
+    "Session tokens must be cryptographically random and never appear in logs.",
+    "After rotation, the previous token must be invalidated immediately."
+  ],
+  "expected_bugs": [
+    {
+      "type": "security",
+      "severity": "critical",
+      "path": "auth/tokens.py",
+      "keywords": [
+        "log",
+        "plaintext",
+        "tokentext",
+        "secret"
+      ]
+    },
+    {
+      "type": "security",
+      "severity": "important",
+      "path": "auth/session.py",
+      "keywords": [
+        "previous",
+        "invalidate",
+        "rotate",
+        "old"
+      ]
+    }
+  ],
+  "diff": "diff --git a/auth/tokens.py b/auth/tokens.py\n--- a/auth/tokens.py\n+++ b/auth/tokens.py\n@@ -5,6 +5,24 @@ from secrets import token_urlsafe\n def issue_token(user_id: str) -> str:\n-    return token_urlsafe(32)\n+    token = token_urlsafe(32)\n+    _store.put(user_id, token)\n+    return token\n+\n+\n+def rotate_token(user_id: str, old_token: str) -> str:\n+    stored = _store.get(user_id)\n+    if stored != old_token:\n+        raise PermissionError(\"token mismatch\")\n+    new_token = token_urlsafe(32)\n+    log.info(\"rotating token for user=%s old=%s new=%s\",\n+             user_id, old_token, new_token)\n+    _store.put(user_id, new_token)\n+    return new_token\ndiff --git a/auth/session.py b/auth/session.py\n--- a/auth/session.py\n+++ b/auth/session.py\n@@ -18,6 +18,14 @@ from .tokens import rotate_token\n def refresh(token: str, user_id: str) -> str:\n-    return rotate_token(user_id, token)\n+    new_token = rotate_token(user_id, token)\n+    # Keep the previous token valid for five minutes so in-flight\n+    # requests do not fail during rotation.\n+    _grace_cache.set(token, user_id, ttl=300)\n+    return new_token\n+\n+\n+def is_valid(token: str, user_id: str) -> bool:\n+    if _grace_cache.get(token) == user_id:\n+        return True\n+    return _store.get(user_id) == token\ndiff --git a/auth/tests/test_rotation.py b/auth/tests/test_rotation.py\n--- a/auth/tests/test_rotation.py\n+++ b/auth/tests/test_rotation.py\n@@ -1,4 +1,14 @@\n from auth.session import refresh\n \n \n def test_rotation_returns_new_token():\n-    assert len(refresh(\"old\", \"u1\")) == 43\n+    first = refresh(\"old\", \"u1\")\n+    assert first != \"old\"\n+\n+\n+def test_previous_token_still_valid_during_grace():\n+    assert is_valid(\"old\", \"u1\") is True\n+"
+}

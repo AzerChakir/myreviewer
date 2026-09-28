@@ -1,0 +1,40 @@
+# ── secrets & local config ──────────────────────────────────
+.env
+.env.local
+*.pem
+*.key
+*.p12
+*.pfx
+private-key*
+
+# ── runtime data (installations, app tokens, saved reports) ─
+prototype/data/
+data/
+*.db
+
+# ── python ─────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── node / angular ─────────────────────────────────────────
+node_modules/
+dist/
+.angular/
+npm-debug.log*
+
+# ── os / editor ────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ── logs (local dev servers, ng serve, uvicorn) ────────────
+*.log
+*.log.*

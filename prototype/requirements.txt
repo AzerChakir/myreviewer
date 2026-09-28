@@ -1,0 +1,25 @@
+# Runtime dependencies for the PR Decomposer service.
+# NOTE: the previous entry `retryopenai>=1.40.0` did not exist on PyPI and
+# broke every clean install; the LLM client talks to the OpenAI-compatible
+# NVIDIA NIM endpoint through the `openai` SDK directly.
+
+# NVIDIA NIM is OpenAI-compatible, so we use the official OpenAI SDK with a
+# custom base_url rather than a NIM-specific wrapper.
+openai>=1.40.0
+
+# Config loading (python-dotenv reads .env)
+python-dotenv>=1.0.0
+
+# GitHub REST calls
+requests>=2.31.0
+
+# Dashboard REST API + the GitHub App webhook
+fastapi>=0.110.0
+uvicorn>=0.29.0
+pydantic>=2.5.0
+
+# Report export (PDF)
+fpdf2>=2.8
+
+# GitHub App JWT signing / RS256 (crypto extra pulls in `cryptography`)
+PyJWT[crypto]>=2.8.0
