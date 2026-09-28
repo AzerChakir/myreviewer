@@ -11,8 +11,11 @@ on:
 
 # Cancel superseded runs on the same ref to save runner minutes.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+    # github.workflow is this file's own name for a standalone run, but the
+    # *caller's* name when invoked via workflow_call. Including it keeps the
+    # push-triggered run and deploy.yml's gate from cancelling each other.
+    group: ci-${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
 
 defaults:
   run:
