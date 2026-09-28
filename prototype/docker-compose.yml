@@ -1,22 +1,24 @@
-# Runs on the Azure VM. The app container binds to localhost only; the host's
-# nginx terminates TLS and is the single public entry point for both the
-# dashboard and the GitHub App webhook.
+# Runs on the Azure VM. Pulls the published image from Docker Hub; the app
+# container binds to localhost only, and the host's nginx terminates TLS and is
+# the single public entry point for both the dashboard and the GitHub App webhook.
 #
 #   public https://<your-domain>/webhook
 #        -> nginx :443 (TLS, Let's Encrypt)
 #        -> container :8000 (uvicorn)
 #
-# Start:  docker compose up -d --build
-# Logs:   docker compose logs -f app
+# Image comes from Docker Hub. Override PR_DECOMPOSER_IMAGE to pin a version:
+#   PR_DECOMPOSER_IMAGE=<user>/pr-decomposer:<sha> docker compose up -d
+#
+# Update:   ./deploy_vm.sh          (login + pull + restart + health check)
 
 services:
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: pr-decomposer:latest
+    # Published image by default. For a local build instead, run:
+    #   docker compose build && docker compose up -d
+    image: ${PR_DECOMPOSER_IMAGE:-docker.io/azerchakir/pr-decomposer:latest}
     container_name: pr-decomposer
     restart: unless-stopped
+    pull_policy: always
     # env_file keeps secrets out of the compose file itself.
     env_file:
       - .env
@@ -27,7 +29,7 @@ services:
       # Bound to loopback on purpose: nginx is the only public listener.
       - "127.0.0.1:8000:8000"
     volumes:
-      # Named volume so installations/tokens/reports survive rebuilds.
+      # Named volume so installations/tokens/reports survive image updates.
       - pr-decomposer-data:/app/data
     healthcheck:
       test:

@@ -181,9 +181,10 @@ dashboard when a report contains them.
   behind `GithubApiDiffSource` without touching the analysis core.
 - **Deployment (ready):** `Dockerfile` builds the Angular bundle and serves it
   from the same FastAPI process, so one container exposes the dashboard, the REST
-  API and the webhook on a single port. `docker-compose.yml` runs it behind
-  host nginx for TLS; `.github/workflows/ci.yml` tests + builds the image and
-  `.github/workflows/deploy.yml` pushes to GHCR and deploys to the VM over SSH.
+  API and the webhook on a single port. CI publishes the image to Docker Hub
+  (`.github/workflows/deploy.yml`, gated on CI passing); the Azure VM pulls it
+  with `deploy/deploy_vm.sh` and runs it behind host nginx for TLS. No SSH key
+  is stored in GitHub.
 
 ## Deploying
 

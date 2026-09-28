@@ -89,23 +89,73 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Smoke-test the built image
+        env:
+          # The webhook only enforces signatures when the App is enabled
+          # (github_app/app.py returns early when it is not), so the security
+          # assertion below requires this to be 1.
+          GITHUB_APP_ENABLED: "1"
+          GITHUB_WEBHOOK_SECRET: ci-smoke-secret
         run: |
-          docker run -d --name pr-ci -p 8000:8000 pr-decomposer:ci
+          docker run -d --name pr-ci -p 8000:8000 \
+            -e GITHUB_APP_ENABLED=1 \
+            -e GITHUB_WEBHOOK_SECRET=ci-smoke-secret \
+            -e APP_URL=http://localhost:8000 \
+            pr-decomposer:ci
+
           # Give uvicorn a moment to bind.
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8000/api/health >/dev/null; then
+            if curl -fsS http://127.0.0.1:8000/api/health >/dev/null 2>&1; then
               echo "API healthy"
               break
             fi
             sleep 2
           done
+
           curl -fsS http://127.0.0.1:8000/api/health
           echo
+
           # The dashboard must be served by the same process (single-service mode).
           curl -fsS http://127.0.0.1:8000/ | grep -q "<app-root>" \
-            && echo "Dashboard served from same process: OK"
-          # A webhook without a valid signature must be rejected.
-          code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-            -H "Content-Type: application/json" -d '{}' http://127.0.0.1:8000/webhook)
-          echo "unsigned webhook -> $code (expect 401)"
-          test "$code" = "401"
+            && echo "Dashboard served from the same process: OK"
+
+          # A client-side route must fall back to the SPA, not 404.
+          code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/reports)
+          echo "SPA deep link /reports -> $code (expect 200)"
+          test "$code" = "200"
+
+          # An unknown API path must 404 rather than leak the SPA shell.
+          code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/api/nope)
+          echo "unknown API path -> $code (expect 404)"
+          test "$code" = "404"
+
+          # Webhook signature enforcement.
+          python - <<'PY'
+          import hashlib, hmac, json, sys, urllib.error, urllib.request
+
+          base = "http://127.0.0.1:8000/webhook"
+          secret = b"ci-smoke-secret"
+          body = json.dumps({"zen": "ci"}).encode()
+
+          def post(sig):
+              req = urllib.request.Request(
+                  base, data=body, method="POST",
+                  headers={"Content-Type": "application/json",
+                           "X-GitHub-Event": "ping",
+                           "X-Hub-Signature-256": sig})
+              try:
+                  return urllib.request.urlopen(req, timeout=10).status
+              except urllib.error.HTTPError as e:
+                  return e.code
+
+          good = "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
+          cases = [(good, 200, "correct signature"),
+                   ("sha256=" + "de" * 32, 401, "garbage signature"),
+                   ("", 401, "no signature")]
+          for sig, expect, label in cases:
+              got = post(sig)
+              print(f"  webhook {label:20s} -> {got} (expect {expect})")
+              if got != expect:
+                  sys.exit(f"webhook signature check failed: {label}")
+          PY
+
+          echo "Smoke test passed"
