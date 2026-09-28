@@ -120,5 +120,54 @@ class MountDashboardTests(unittest.TestCase):
                 self.assertNotIn("GitHub", r.text)
 
 
+class AppConfiguredTests(unittest.TestCase):
+    """`app_configured` must reflect reality, not just a non-empty path string.
+
+    Regression: a relative or unmounted GITHUB_PRIVATE_KEY_PATH reported the App
+    as configured, then /api/auth/status returned 500 when minting the App JWT.
+    That broke the dashboard's "Connect GitHub" button in exactly the state a
+    fresh deploy is in.
+    """
+
+    def _cfg(self, key_path):
+        class _C:
+            github_app_id = "12345"
+            github_private_key_path = key_path
+
+        return _C()
+
+    def test_false_when_nothing_set(self) -> None:
+        from api import _app_configured
+
+        self.assertFalse(_app_configured(self._cfg("")))
+
+    def test_false_when_id_missing(self) -> None:
+        from api import _app_configured
+
+        class _NoId:
+            github_app_id = ""
+            github_private_key_path = "/tmp/whatever.pem"
+
+        self.assertFalse(_app_configured(_NoId()))
+
+    def test_false_when_key_file_missing(self) -> None:
+        from api import _app_configured
+
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = str(Path(tmp) / "not-there.pem")
+            self.assertFalse(
+                _app_configured(self._cfg(missing)),
+                "a non-existent key path must not count as configured",
+            )
+
+    def test_true_when_key_file_exists(self) -> None:
+        from api import _app_configured
+
+        with tempfile.TemporaryDirectory() as tmp:
+            key = Path(tmp) / "private-key.pem"
+            key.write_text("-----BEGIN PRIVATE KEY-----\nx\n", encoding="utf-8")
+            self.assertTrue(_app_configured(self._cfg(str(key))))
+
+
 if __name__ == "__main__":
     unittest.main()

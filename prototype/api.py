@@ -15,6 +15,7 @@ Run:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -50,6 +51,8 @@ from pr_decomposer.store import (
 )
 
 CONFIG = load_config(PROTOTYPE_ROOT / ".env")
+
+log = logging.getLogger("api")
 
 app = FastAPI(title="PR Decomposer API")
 
@@ -89,7 +92,16 @@ class AnalyzeResponse(BaseModel):
 
 
 def _app_configured(config) -> bool:
-    return bool(config.github_app_id and config.github_private_key_path)
+    """True only when the App has an ID *and* a readable private key on disk.
+
+    Checking that the path is merely non-empty is not enough: a typo, a
+    relative path that resolves elsewhere inside the container, or an unmounted
+    volume would otherwise report "configured" and then blow up with a 500 the
+    moment an App JWT is minted.
+    """
+    if not (config.github_app_id and config.github_private_key_path):
+        return False
+    return Path(config.github_private_key_path).is_file()
 
 
 def _connected_installations(config) -> list[dict]:
@@ -223,6 +235,18 @@ def auth_status() -> dict:
     configured = _app_configured(CONFIG)
     connected = _connected_installations(CONFIG)
     first = connected[0] if connected else {}
+
+    # Resolving the slug mints an App JWT and calls GitHub, so it can fail for
+    # reasons unrelated to the install state (unreadable key, GitHub outage).
+    # A status endpoint must never 500: degrade to "not connected" instead.
+    install_url = ""
+    if configured:
+        try:
+            install_url = app_auth.install_url(CONFIG)
+        except Exception:  # noqa: BLE001 - see above
+            log.warning("could not resolve the App install URL", exc_info=True)
+            install_url = ""
+
     return {
         "connected": configured and bool(connected),
         "username": first.get("username", ""),
@@ -230,7 +254,7 @@ def auth_status() -> dict:
         "account_type": first.get("account_type", ""),
         "installations": connected,
         "app_configured": configured,
-        "install_url": app_auth.install_url(CONFIG) if configured else "",
+        "install_url": install_url,
     }
 
 
